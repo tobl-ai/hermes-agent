@@ -57,7 +57,10 @@ async def test_capacity_refuses_before_custody_and_ambiguous_controls_are_inert(
     try:
         for mid, text in [('m1', 'a'), ('m2', 'b')]:
             await adapter.handle_message(event(adapter, mid, text))
-        await async_wait_until(lambda: len(admissions(authority)) == 2, what='both admitted')
+        await async_wait_until(
+            lambda: len(admissions(authority)) == 2 and all(
+                row['status'] == 'started' for row in admissions(authority)),
+            what='both owners started before ambiguous controls')
         for mid, text in [('m3', '/stop'), ('m4', 'yes'), ('m5', '/new')]:
             await adapter.handle_message(event(adapter, mid, text))
         assert len(admissions(authority)) == 2
@@ -85,7 +88,9 @@ async def test_other_sender_or_room_cannot_target_work(monkeypatch):
     _runner, authority, adapter = await setup_owner(monkeypatch, produce)
     try:
         await adapter.handle_message(event(adapter, 'm1', 'a'))
-        await async_wait_until(lambda: len(admissions(authority)) == 1, what='work admitted')
+        await async_wait_until(
+            lambda: len(admissions(authority)) == 1 and admissions(authority)[0]['status'] == 'started',
+            what='owner work started before unauthorized controls')
         await adapter.handle_message(event(adapter, 'm2', '/stop', reply='m1', user='bob'))
         assert any('originating sender' in text for text in adapter.sent)
         await adapter.handle_message(event(adapter, 'm3', 'continue', reply='m1', chat='elsewhere'))

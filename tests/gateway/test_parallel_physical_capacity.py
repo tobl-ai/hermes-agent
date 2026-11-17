@@ -41,6 +41,12 @@ async def test_terminal_admission_still_occupies_capacity_until_thread_exits(mon
         await async_wait_until(lambda: not adapter._background_tasks, what='parent settled')
         scope = conversation_scope(original.source)
         assert len(active_work(authority.db, scope)) == 1
+        # Shutdown must retain both physical occupancy and upstream's delegation lane.
+        monkeypatch.setattr('gateway.run_shutdown._active_async_delegation_count', lambda: 3)
+        counts = runner._drain_work_counts()
+        assert len(counts) == 5
+        assert counts[0] >= 1
+        assert counts[4] == 3
         # Cancellation of the caller cannot release a thread which is already running.
         assert not future.cancel()
         binding = original.source.parallel_work

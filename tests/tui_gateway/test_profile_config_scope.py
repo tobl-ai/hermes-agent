@@ -4,7 +4,9 @@ from pathlib import Path
 
 import pytest
 
+from agent.runtime_scope import bind_state, scope_for_profile
 from agent.secret_scope import current_secret_scope, current_secret_scope_home, get_secret, set_multiplex_active
+from hermes_scope import Fence, current_scope
 from hermes_constants import get_hermes_home, get_hermes_home_override
 from tools.terminal_scope import get_terminal_scope
 from tui_gateway import launch_profile_policy as policy
@@ -46,6 +48,17 @@ def test_a_secondary_home_gets_only_its_own_files(homes):
     assert (get_hermes_home_override(), current_secret_scope(), get_terminal_scope()) == (None, None, None)
 
 
+def test_the_launch_home_inside_a_secondary_scope_is_the_launch_home(homes):
+    launch, work, _ = homes
+    with policy.profile_config_scope(work), policy.profile_config_scope(launch):
+        assert get_hermes_home() == launch
+        assert current_secret_scope_home() is None
+        assert _secrets() == {"LAUNCH_FILE_KEY": "launch-file", "LAUNCH_ENV_ONLY": "env-only", "WORK_KEY": None,
+                              "SHARED_KEY": "launch"}
+        assert (get_terminal_scope() or {}).get("TERMINAL_ENV") != "docker"
+    assert (get_hermes_home_override(), current_secret_scope(), get_terminal_scope()) == (None, None, None)
+
+
 def test_the_launch_home_keeps_the_launch_rules(homes):
     launch, _, multiplex = homes
     with policy.profile_config_scope(launch):
@@ -59,3 +72,27 @@ def test_the_launch_home_keeps_the_launch_rules(homes):
         else:
             assert (get_hermes_home_override(), get_terminal_scope()) == (None, None)
     assert (get_hermes_home_override(), current_secret_scope(), get_terminal_scope()) == (None, None, None)
+
+
+def test_config_scope_binds_identity_and_restores_after_failure(homes):
+    launch, work, _ = homes
+    outer = current_scope()
+    with pytest.raises(ValueError, match="body failed"):
+        with policy.profile_config_scope(work):
+            assert current_scope().agent == str(work)
+            with policy.profile_config_scope(launch):
+                assert current_scope().agent == str(launch)
+                assert get_hermes_home() == launch
+            assert current_scope().agent == str(work)
+            raise ValueError("body failed")
+    assert current_scope() is outer
+    assert (get_hermes_home_override(), current_secret_scope(), get_terminal_scope()) == (None, None, None)
+
+
+def test_same_profile_config_read_preserves_turn_ownership(homes):
+    _, work, _ = homes
+    turn = scope_for_profile(work).for_turn("session", "turn", Fence(7, 3))
+    with bind_state(turn, hydrate_secrets=False):
+        with policy.profile_config_scope(work):
+            assert current_scope() is turn
+        assert current_scope() is turn
